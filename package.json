@@ -1,0 +1,28 @@
+{
+  "name": "gachagaming-topup",
+  "version": "1.0.0",
+  "description": "GachaGaming Open API client, top-up CLI and Discord bot with session audit",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "dry": "cross-env GACHA_DRY_RUN=true tsx src/cli.ts",
+    "quick": "tsx src/cli.ts quick",
+    "quick:dry": "cross-env GACHA_DRY_RUN=true tsx src/cli.ts quick",
+    "typecheck": "tsc --noEmit",
+    "bot": "cross-env NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/bot/index.ts"
+  },
+  "dependencies": {
+    "discord.js": "^14.28.1",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "cross-env": "^7.0.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

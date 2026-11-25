@@ -1,0 +1,895 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "GachaGaming Open API",
+    "version": "1.0.1",
+    "description": "Merchant API for checking deposit balance, listing games and creating top-up orders. Built from https://docs.gachagaming.com/ (last updated 08 Aug 2025). Get your client secret from https://merchant.gachagaming.com."
+  },
+  "servers": [
+    {
+      "url": "https://api.gachagaming.com/open-api"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Account"
+    },
+    {
+      "name": "Product"
+    },
+    {
+      "name": "Transaction"
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "operationId": "getAccountBalance",
+        "summary": "Account balance",
+        "description": "Returns the merchant's current deposit balance.",
+        "responses": {
+          "200": {
+            "description": "Balance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "deposit": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                },
+                "example": {
+                  "data": {
+                    "deposit": 6104311
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid client secret (not explicitly documented)."
+          }
+        }
+      }
+    },
+    "/product": {
+      "get": {
+        "tags": [
+          "Product"
+        ],
+        "operationId": "listProducts",
+        "summary": "Product list",
+        "description": "Lists all available games/products.",
+        "responses": {
+          "200": {
+            "description": "Products",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProductSummary"
+                      }
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "f74c7b3b-4d9f-4a8b-b269-f0fa660e3b5f",
+                      "slug": "arena-breakout",
+                      "title": "Arena Breakout",
+                      "imageUrl": "https://static.gachagaming.com/arena-breakout-0-28b5ca90.webp"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid client secret (not explicitly documented)."
+          }
+        }
+      }
+    },
+    "/product/{slug}": {
+      "get": {
+        "tags": [
+          "Product"
+        ],
+        "operationId": "getProduct",
+        "summary": "Product detail",
+        "description": "Returns a product's categories, purchasable items with prices, and the forms (e.g. User ID, Server) needed to create a transaction.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Product slug from Product List",
+            "example": "zenless-zone-zero"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ProductDetail"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                },
+                "example": {
+                  "data": {
+                    "id": "8b480412-9b8e-40c9-89e2-b8fc5c75ca6a",
+                    "slug": "zenless-zone-zero",
+                    "title": "Zenless Zone Zero",
+                    "categories": [
+                      {
+                        "id": "cbb56d67-ca28-45a8-94a5-25d6ef568101",
+                        "name": "Membership"
+                      }
+                    ],
+                    "items": [
+                      {
+                        "id": "8948582e-3c33-4527-bf7e-33f2439ca6fa",
+                        "category": "cbb56d67-ca28-45a8-94a5-25d6ef568101",
+                        "name": "Inter-Knot Membership",
+                        "price": 62354
+                      }
+                    ],
+                    "forms": [
+                      {
+                        "id": "b86306dd-244c-4c3c-8713-e32f5f3ab3f4",
+                        "type": 1,
+                        "label": "User ID",
+                        "placeholder": "User ID",
+                        "isRequired": true,
+                        "options": []
+                      },
+                      {
+                        "id": "9a46a9d0-2ff2-4c99-a48e-2d739703b45c",
+                        "type": 3,
+                        "label": "Server",
+                        "placeholder": "Server",
+                        "isRequired": true,
+                        "options": [
+                          {
+                            "id": "37f9d7c2-dfa4-4f8d-b287-0db1960c15ce",
+                            "label": "America",
+                            "value": "1"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid client secret (not explicitly documented)."
+          },
+          "404": {
+            "description": "Unknown slug (not explicitly documented)."
+          }
+        }
+      }
+    },
+    "/transaction": {
+      "get": {
+        "tags": [
+          "Transaction"
+        ],
+        "operationId": "listTransactions",
+        "summary": "Transaction list",
+        "description": "Paginated list of your transactions, 15 per page.",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "description": "Page number (shown in the docs' pagination links)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transactions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Transaction"
+                      }
+                    },
+                    "links": {
+                      "$ref": "#/components/schemas/PaginationLinks"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/PaginationMeta"
+                    }
+                  }
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "MTRX2L4P6MPVKYCJZOHH0BM8T9OB",
+                      "merchantOrderId": "FX-250123-110-12345",
+                      "status": 1,
+                      "subTotal": 1443000,
+                      "discount": 0,
+                      "total": 1443000,
+                      "createdAt": "2025-06-18T11:43:40.000000+0000",
+                      "product": {
+                        "id": "4e0470a3-6ef2-498b-be16-730e98c1955e",
+                        "slug": "mobile-legends",
+                        "title": "Mobile Legends",
+                        "imageUrl": "https://static.gachagaming.com/mobile-legends-0-1be50c3c.webp"
+                      },
+                      "item": {
+                        "id": "ec1ff987-6c1c-4465-b278-90bcf2026859",
+                        "name": "5 Diamonds ( 5 + 0 Bonus )",
+                        "price": 1443,
+                        "quantity": 1000,
+                        "subTotal": 1443000
+                      },
+                      "forms": [
+                        {
+                          "label": "User ID",
+                          "value": "87653123"
+                        },
+                        {
+                          "label": "Server",
+                          "value": "12472"
+                        }
+                      ]
+                    }
+                  ],
+                  "links": {
+                    "first": "https://api.gachagaming.com/open-api/transaction?page=1",
+                    "last": "https://api.gachagaming.com/open-api/transaction?page=10",
+                    "prev": null,
+                    "next": "https://api.gachagaming.com/open-api/transaction?page=2"
+                  },
+                  "meta": {
+                    "current_page": 1,
+                    "from": 1,
+                    "last_page": 10,
+                    "per_page": 15,
+                    "to": 15,
+                    "total": 138,
+                    "path": "https://api.gachagaming.com/open-api/transaction",
+                    "links": []
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid client secret (not explicitly documented)."
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Transaction"
+        ],
+        "operationId": "createTransaction",
+        "summary": "Create transaction",
+        "description": "Creates a top-up order. `price` must equal current item price x quantity.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransactionCreateRequest"
+              },
+              "example": {
+                "merchantOrderId": "FX-250123-110-12345",
+                "slug": "mobile-legends",
+                "price": 2886,
+                "item": {
+                  "id": "ec1ff987-6c1c-4465-b278-90bcf2026859",
+                  "quantity": 2
+                },
+                "forms": [
+                  {
+                    "id": "ab466b60-aeb8-464a-86f6-368f1fda62a5",
+                    "value": "87653123"
+                  },
+                  {
+                    "id": "31f8735f-ab11-489e-a5f8-5859f353178d",
+                    "value": "12472"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                },
+                "example": {
+                  "data": {
+                    "id": "MTRX2L4P6MPVKYCJZOHH0BM8T9OB"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid client secret (not explicitly documented)."
+          },
+          "422": {
+            "description": "Validation failed, e.g. price is out of date."
+          }
+        }
+      }
+    },
+    "/transaction/{id}": {
+      "get": {
+        "tags": [
+          "Transaction"
+        ],
+        "operationId": "getTransaction",
+        "summary": "Transaction detail",
+        "description": "Returns a transaction with its status history and any redeem code.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Transaction id from Create Transaction",
+            "example": "MTRX2L4P6MPVKYCJZOHH0BM8T9OB"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transaction detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TransactionDetail"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                },
+                "example": {
+                  "data": {
+                    "id": "MTRX2L4P6MPVKYCJZOHH0BM8T9OB",
+                    "merchantOrderId": "FX-250123-110-12345",
+                    "status": 1,
+                    "subTotal": 1443000,
+                    "discount": 0,
+                    "total": 1443000,
+                    "createdAt": "2025-06-18T11:43:40.000000+0000",
+                    "product": {
+                      "id": "4e0470a3-6ef2-498b-be16-730e98c1955e",
+                      "slug": "mobile-legends",
+                      "title": "Mobile Legends",
+                      "imageUrl": "https://static.gachagaming.com/mobile-legends-0-1be50c3c.webp"
+                    },
+                    "item": {
+                      "id": "ec1ff987-6c1c-4465-b278-90bcf2026859",
+                      "name": "5 Diamonds ( 5 + 0 Bonus )",
+                      "price": 1443,
+                      "quantity": 1000,
+                      "subTotal": 1443000
+                    },
+                    "forms": [
+                      {
+                        "label": "User ID",
+                        "value": "87653123"
+                      },
+                      {
+                        "label": "Server",
+                        "value": "12472"
+                      }
+                    ],
+                    "updates": [
+                      {
+                        "id": "8ea01027-4b40-49ea-a62a-b4f78cb21c74",
+                        "status": "Paid",
+                        "createdAt": "2025-06-18T11:43:40.000000+0000",
+                        "description": "[Merchant] Payment verified."
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid client secret (not explicitly documented)."
+          },
+          "404": {
+            "description": "Not found (not explicitly documented)."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Your merchant client secret (API key)."
+      }
+    },
+    "schemas": {
+      "ProductSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "imageUrl": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "imageUrl"
+        ]
+      },
+      "Category": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ProductItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "description": "Category id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "price": {
+            "type": "number",
+            "description": "Unit price (docs example shows it as a string)."
+          }
+        }
+      },
+      "FormOption": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "ProductForm": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "integer",
+            "enum": [
+              1,
+              2,
+              3
+            ],
+            "description": "1 = text, 2 = number, 3 = select"
+          },
+          "label": {
+            "type": "string"
+          },
+          "placeholder": {
+            "type": "string"
+          },
+          "isRequired": {
+            "type": "boolean",
+            "description": "Docs example shows it as a string \"true\"."
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FormOption"
+            },
+            "description": "Only used when type = 3"
+          }
+        }
+      },
+      "ProductDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ProductSummary"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "bannerUrl": {
+                "type": "string",
+                "format": "uri"
+              },
+              "categories": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Category"
+                }
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ProductItem"
+                }
+              },
+              "forms": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ProductForm"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "TransactionStatus": {
+        "type": "integer",
+        "enum": [
+          -2,
+          -1,
+          0,
+          1,
+          2,
+          3
+        ],
+        "description": "-2 Refunded, -1 Cancelled, 0 Unpaid, 1 On Process (Paid), 2 Completed, 3 On Hold"
+      },
+      "TransactionItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "price": {
+            "type": "number"
+          },
+          "quantity": {
+            "type": "integer"
+          },
+          "subTotal": {
+            "type": "number"
+          }
+        }
+      },
+      "FormValue": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "Transaction": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "merchantOrderId": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/TransactionStatus"
+          },
+          "subTotal": {
+            "type": "number"
+          },
+          "discount": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "product": {
+            "$ref": "#/components/schemas/ProductSummary"
+          },
+          "item": {
+            "$ref": "#/components/schemas/TransactionItem"
+          },
+          "forms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FormValue"
+            }
+          }
+        }
+      },
+      "TransactionUpdate": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "example": "Paid"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      },
+      "TransactionDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Transaction"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "item": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TransactionItem"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "redeemCode": {
+                        "type": "string",
+                        "nullable": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "updates": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TransactionUpdate"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "PaginationLinks": {
+        "type": "object",
+        "properties": {
+          "first": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true
+          },
+          "last": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true
+          },
+          "prev": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true
+          },
+          "next": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true
+          }
+        }
+      },
+      "PaginationMeta": {
+        "type": "object",
+        "properties": {
+          "current_page": {
+            "type": "integer"
+          },
+          "from": {
+            "type": "integer",
+            "nullable": true
+          },
+          "last_page": {
+            "type": "integer"
+          },
+          "per_page": {
+            "type": "integer"
+          },
+          "to": {
+            "type": "integer",
+            "nullable": true
+          },
+          "total": {
+            "type": "integer"
+          },
+          "path": {
+            "type": "string",
+            "format": "uri"
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "label": {
+                  "type": "string"
+                },
+                "active": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      },
+      "TransactionCreateRequest": {
+        "type": "object",
+        "required": [
+          "slug",
+          "price",
+          "item",
+          "forms"
+        ],
+        "properties": {
+          "merchantOrderId": {
+            "type": "string",
+            "description": "Your own order reference (optional)."
+          },
+          "slug": {
+            "type": "string",
+            "description": "Product slug from Product List."
+          },
+          "price": {
+            "type": "number",
+            "description": "Item price x quantity. Must match the current price or the API returns 422."
+          },
+          "item": {
+            "type": "object",
+            "required": [
+              "id",
+              "quantity"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Item id from Product Detail."
+              },
+              "quantity": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "forms": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "value"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Form id from Product Detail."
+                },
+                "value": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
