@@ -15,6 +15,10 @@ export interface BotConfig {
   timeZone: string;
   /** Sessions with no activity for this many hours end automatically */
   idleHours: number;
+  /** true (default): real top-ups by non-admins need an admin to press Approve in a DM */
+  requireApproval: boolean;
+  /** Approval requests expire after this many minutes */
+  approvalMinutes: number;
 }
 
 export function loadBotConfig(env: NodeJS.ProcessEnv = process.env): BotConfig {
@@ -42,5 +46,7 @@ export function loadBotConfig(env: NodeJS.ProcessEnv = process.env): BotConfig {
     logChannelId: env.DISCORD_LOG_CHANNEL_ID?.trim() || null,
     timeZone: env.AUDIT_TIMEZONE?.trim() || 'Asia/Singapore',
     idleHours: Number(env.SESSION_IDLE_HOURS) || 12,
+    requireApproval: !['false', '0', 'no', 'off'].includes((env.TOPUP_REQUIRE_APPROVAL ?? 'true').trim().toLowerCase()),
+    approvalMinutes: Number(env.APPROVAL_EXPIRY_MINUTES) || 10,
   };
 }

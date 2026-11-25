@@ -99,7 +99,7 @@ export function today(timeZone: string): string {
 }
 
 export function topupLine(t: TopupRow, timeZone: string, withUser = false): string {
-  const icon = t.status === 'placed' ? '✅' : t.status === 'test' ? '🧪' : '❌';
+  const icon = t.status === 'placed' ? '✅' : t.status === 'test' ? '🧪' : t.status === 'rejected' ? '🚫' : '❌';
   const who = withUser ? ` **${t.username}**` : '';
   const tx = t.tx_status ? ` · ${t.tx_status}` : '';
   return `${icon} ${localTime(t.created_at, timeZone)}${who} · ${t.item_name} ×${t.quantity} · **${idr(t.total_idr)}**${tx}`;

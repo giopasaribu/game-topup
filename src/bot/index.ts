@@ -20,6 +20,7 @@ import {
   type ChatInputCommandInteraction,
   type Interaction,
   type Message,
+  type MessageCreateOptions,
   type StringSelectMenuInteraction,
 } from 'discord.js';
 import { AuditStore, type Session, type TopupRow } from '../audit/db.js';
@@ -91,7 +92,7 @@ const commandDefs = [
         .setDescription('Admin: download top-ups as CSV')
         .addIntegerOption((o) => o.setName('days').setDescription('Last N days (default 30)').setMinValue(1).setMaxValue(3650)),
     ),
-  new SlashCommandBuilder().setName('balance').setDescription('Admin: merchant deposit balance'),
+  new SlashCommandBuilder().setName('balance').setDescription('Merchant deposit balance'),
   new SlashCommandBuilder()
     .setName('order')
     .setDescription('Check a transaction status')
@@ -156,6 +157,7 @@ client.once(Events.ClientReady, async (c) => {
   });
   console.log(`Logged in as ${c.user.tag}. ${commandDefs.length} commands registered in guild ${cfg.guildId}.`);
   if (gacha.dryRun) console.log('GACHA_DRY_RUN is on: /topup will not send real orders.');
+  console.log(cfg.requireApproval ? `Approval is ON: members' top-ups need an admin to approve (expires after ${cfg.approvalMinutes} min).` : 'Approval is OFF: anyone with the role can pay directly.');
 });
 
 client.on(Events.InteractionCreate, async (i) => {
@@ -164,6 +166,7 @@ client.on(Events.InteractionCreate, async (i) => {
     if (i.isChatInputCommand()) return await onCommand(i);
     if (i.isStringSelectMenu() && i.customId.startsWith('tp:pick:')) return await onPick(i);
     if (i.isButton() && i.customId.startsWith('tp:')) return await onButton(i);
+    if (i.isButton() && i.customId.startsWith('ap:')) return await onApproval(i);
   } catch (e) {
     console.error(e);
     if (!i.isRepliable()) return;
@@ -391,10 +394,12 @@ async function showPreview(
     return void (await i.editReply({ content: '', embeds: [embed], components: [] }));
   }
 
+  const approval = needsApproval(p);
+  if (approval) embed.setFooter({ text: [note, `An admin must approve this (expires ${cfg.approvalMinutes} min after you request).`].filter(Boolean).join(' · ') });
   const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`tp:ok:${token}`)
-      .setLabel(test ? 'Run test' : `Pay ${idr(preview.total)}`)
+      .setCustomId(`tp:${approval ? 'req' : 'ok'}:${token}`)
+      .setLabel(test ? 'Run test' : approval ? 'Request approval' : `Pay ${idr(preview.total)}`)
       .setStyle(test ? ButtonStyle.Primary : ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`tp:no:${token}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
   );
@@ -409,12 +414,31 @@ async function onButton(i: ButtonInteraction): Promise<void> {
   pending.delete(token); // one click only, no double orders
 
   if (action === 'no') return void (await i.update({ content: 'Cancelled. Nothing was ordered.', embeds: [], components: [] }));
+  if (action === 'req') {
+    if (!needsApproval(p)) return void (await i.update({ content: 'This top-up expired. Run the command again.', embeds: [], components: [] }));
+    return requestApproval(i, p);
+  }
+  if (needsApproval(p)) return void (await i.update({ content: 'This top-up needs admin approval. Run the command again.', embeds: [], components: [] }));
 
   await i.update({ content: '⏳ Working...', embeds: [], components: [] });
-  const preview = p.preview!;
+  const result = await placeOrder(i, p, p.preview!, null);
+  await i.editReply(result);
+}
+
+/** Real top-ups by non-admins need approval when TOPUP_REQUIRE_APPROVAL is on. Tests never do. */
+function needsApproval(p: Pending): boolean {
+  return p.mode === 'live' && cfg.requireApproval && !isAdmin(p.userId);
+}
+
+/**
+ * Places (or, for tests / GACHA_DRY_RUN, simulates) the order, records it in the audit,
+ * posts the public line through the requester's interaction and tracks the status.
+ * Returns the text to show to whoever triggered it.
+ */
+async function placeOrder(requester: ButtonInteraction, p: Pending, preview: TopupPreview, approvedBy: string | null): Promise<string> {
   const session = audit.getSession(p.sessionId);
   if (!session || session.ended_at) {
-    return void (await i.editReply('Your session ended before you confirmed. Start a new one with `/start-session`.'));
+    return 'The session ended before the order was placed. Nothing was ordered. Start a new one with `/start-session`.';
   }
 
   const base = {
@@ -430,14 +454,15 @@ async function onButton(i: ButtonInteraction): Promise<void> {
     totalIdr: preview.total,
     fields: preview.formSummary,
     merchantOrderId: preview.request!.merchantOrderId,
+    approvedBy,
   };
 
   if (p.mode === 'test' || gacha.dryRun) {
     audit.recordTopup({ ...base, mode: 'test', status: 'test' });
-    return void (await i.editReply(
+    return (
       `🧪 Test passed: **${preview.item!.name}** ×${preview.quantity} for **${idr(preview.total)}** would be ordered. Nothing was sent.` +
-        (p.mode === 'live' ? '\n(GACHA_DRY_RUN is on, so /topup only simulates.)' : ''),
-    ));
+      (p.mode === 'live' ? '\n(GACHA_DRY_RUN is on, so /topup only simulates.)' : '')
+    );
   }
 
   let txId: string;
@@ -446,19 +471,142 @@ async function onButton(i: ButtonInteraction): Promise<void> {
     txId = result.transactionId!;
   } catch (e) {
     audit.recordTopup({ ...base, mode: 'live', status: 'failed', error: errorText(e) });
-    return void (await i.editReply(`❌ Top-up failed, nothing was charged by this bot: ${errorText(e)}`));
+    return `❌ Top-up failed, nothing was charged by this bot: ${errorText(e)}`;
   }
 
   const row = audit.recordTopup({ ...base, mode: 'live', status: 'placed', transactionId: txId });
   const sum = audit.summarize(p.sessionId, 0);
-  await i.editReply(`✅ Order placed. Transaction \`${txId}\`. I'll post the status in the channel.`);
-
   const line =
     `✅ **${p.username}** topped up ${preview.product.title} · ${preview.item!.name} ×${preview.quantity} · **${idr(preview.total)}**` +
+    (approvedBy ? ` (approved by ${approvedBy})` : '') +
     `\nSession #${p.sessionId} total: **${idr(sum.liveTotal)}** (${sum.liveCount} top-ups) · \`${txId}\``;
-  const publicMsg = await i.followUp({ content: line, allowedMentions: NO_PINGS }).catch(() => null);
-  const logMsg = await logToChannel(line, i.channelId);
-  void trackStatus(row, txId, line, i, publicMsg, logMsg);
+  const publicMsg = await requester.followUp({ content: line, allowedMentions: NO_PINGS }).catch(() => null);
+  const logMsg = await logToChannel(line, requester.channelId);
+  void trackStatus(row, txId, line, requester, publicMsg, logMsg);
+  return `✅ Order placed. Transaction \`${txId}\`. The status will be posted in the channel.`;
+}
+
+// ---------- Admin approval (DM with Approve / Reject) ----------
+
+interface Approval {
+  p: Pending;
+  requester: ButtonInteraction;
+  dms: Message[];
+  timer: NodeJS.Timeout;
+}
+const approvals = new Map<string, Approval>();
+
+/** Sends a DM. Replaceable in tests. */
+let sendDm = async (userId: string, payload: MessageCreateOptions): Promise<Message> => {
+  const user = await client.users.fetch(userId);
+  return user.send(payload);
+};
+
+function approvalEmbed(p: Pending, preview: TopupPreview, status?: string): EmbedBuilder {
+  const e = new EmbedBuilder()
+    .setTitle(status ?? '🟡 Top-up approval')
+    .setColor(status ? 0x80848e : 0xf0b232)
+    .addFields(
+      { name: 'Requested by', value: `${p.username} · session #${p.sessionId}`, inline: true },
+      { name: 'Game', value: preview.product.title, inline: true },
+      { name: 'Product', value: preview.item!.name },
+      { name: 'Price', value: `${idr(preview.item!.unitPrice)} × ${preview.quantity}`, inline: true },
+      { name: 'Total', value: `**${idr(preview.total)}**`, inline: true },
+      ...preview.formSummary.map((f) => ({ name: f.label, value: f.value.slice(0, 1024) })),
+      { name: 'Deposit', value: `${idr(preview.balance)} → ${idr(preview.balanceAfter)}` },
+    );
+  return e;
+}
+
+async function requestApproval(i: ButtonInteraction, p: Pending): Promise<void> {
+  await i.update({ content: '⏳ Sending to an admin for approval...', embeds: [], components: [] });
+  const preview = p.preview!;
+  const id = randomBytes(6).toString('hex');
+  const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`ap:ok:${id}`).setLabel(`Approve ${idr(preview.total)}`).setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`ap:no:${id}`).setLabel('Reject').setStyle(ButtonStyle.Danger),
+  );
+
+  const dms: Message[] = [];
+  for (const adminId of cfg.adminIds) {
+    try {
+      dms.push(await sendDm(adminId, { embeds: [approvalEmbed(p, preview)], components: [buttons] }));
+    } catch (e) {
+      console.error(`Could not DM admin ${adminId}:`, e);
+    }
+  }
+  if (!dms.length) {
+    return void (await i.editReply('Could not reach an admin by DM (their DMs may be closed). Nothing was ordered.'));
+  }
+
+  const timer = setTimeout(() => void expireApproval(id), cfg.approvalMinutes * 60_000);
+  timer.unref();
+  approvals.set(id, { p, requester: i, dms, timer });
+  await i.editReply(
+    `📨 Sent to an admin for approval: **${preview.item!.name}** ×${preview.quantity} · **${idr(preview.total)}**.\n` +
+      `You'll see the result here. The request expires in ${cfg.approvalMinutes} minutes.`,
+  );
+}
+
+async function onApproval(i: ButtonInteraction): Promise<void> {
+  const [, action, id] = i.customId.split(':');
+  if (!isAdmin(i.user.id)) return void (await i.reply({ content: 'Only admins can approve top-ups.', flags: EPHEMERAL }));
+  const a = approvals.get(id);
+  if (!a) return void (await i.update({ content: '⌛ This request expired or was already handled. Nothing was ordered.', components: [] }));
+  approvals.delete(id); // first admin to click wins, no double orders
+  clearTimeout(a.timer);
+  const { p, requester } = a;
+  const admin = i.user.username;
+  const original = p.preview!;
+
+  const finish = async (title: string, text: string) => {
+    const payload = { content: text, embeds: [approvalEmbed(p, original, title)], components: [] };
+    await i.editReply(payload).catch(() => {});
+    for (const dm of a.dms) if (dm.id !== i.message.id) await dm.edit(payload).catch(() => {});
+  };
+
+  if (action === 'no') {
+    await i.update({ components: [] });
+    audit.recordTopup({
+      sessionId: p.sessionId, userId: p.userId, username: p.username, mode: 'live', status: 'rejected',
+      gameSlug: original.product.slug, gameTitle: original.product.title, itemId: original.item!.id,
+      itemName: original.item!.name, quantity: original.quantity, unitPriceIdr: original.item!.unitPrice,
+      totalIdr: original.total, fields: original.formSummary, approvedBy: admin,
+    });
+    await finish(`🚫 Rejected by ${admin}`, 'Nothing was ordered.');
+    await requester.editReply(`🚫 Rejected by an admin. Nothing was ordered.`).catch(() => {});
+    return;
+  }
+
+  await i.update({ content: '⏳ Checking the live price and placing the order...', components: [] });
+  // Prices or the deposit may have moved since the request: check again before spending.
+  const fresh = await prepareTopup(gacha, {
+    slug: p.slug, item: original.item!.id, quantity: p.quantity, forms: p.forms,
+  });
+  if (!fresh.ok || fresh.total !== original.total) {
+    const why = !fresh.ok ? fresh.errors.join(' ') : `The price changed from ${idr(original.total)} to ${idr(fresh.total)}.`;
+    await finish(`⚠️ Not ordered`, `${why} Nothing was ordered; ask ${p.username} to request again.`);
+    await requester.editReply(`⚠️ Not ordered: ${why} Run \`/topup\` again.`).catch(() => {});
+    return;
+  }
+
+  const result = await placeOrder(requester, p, fresh, admin);
+  const ok = result.startsWith('✅') || result.startsWith('🧪');
+  await finish(ok ? `✅ Approved by ${admin}` : `❌ Approved by ${admin}, but it failed`, result);
+  await requester.editReply(`${result}\n(Approved by ${admin}.)`).catch(() => {});
+}
+
+async function expireApproval(id: string): Promise<void> {
+  const a = approvals.get(id);
+  if (!a) return;
+  approvals.delete(id);
+  const text = `⌛ Expired after ${cfg.approvalMinutes} minutes without an answer. Nothing was ordered.`;
+  for (const dm of a.dms) {
+    await dm.edit({ content: text, embeds: [approvalEmbed(a.p, a.p.preview!, '⌛ Expired')], components: [] }).catch(() => {});
+  }
+  await a.requester
+    .editReply(`⌛ Your approval request expired (no answer in ${cfg.approvalMinutes} minutes). Nothing was ordered. Run \`/topup\` again.`)
+    .catch(() => {});
 }
 
 /** Polls the order for up to 10 minutes and updates the audit row and the channel message. */
@@ -522,7 +670,7 @@ async function auditCommand(i: ChatInputCommandInteraction): Promise<void> {
 }
 
 async function balance(i: ChatInputCommandInteraction): Promise<void> {
-  if (!isAdmin(i.user.id)) return void (await i.reply({ content: 'Only admins can use this.', flags: EPHEMERAL }));
+  if (!canTopup(i)) return void (await i.reply({ content: roleHint(), flags: EPHEMERAL }));
   await i.deferReply({ flags: EPHEMERAL });
   await i.editReply(`Deposit balance: **${idr(await gacha.getBalance())}**`);
 }
@@ -574,5 +722,8 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
 // BOT_TEST=1 lets the test script drive the handlers without connecting to Discord.
 if (!process.env.BOT_TEST) void client.login(cfg.token);
 
-export const __test = { onCommand, onPick, onButton, onAutocomplete, pending, audit };
+export const __test = {
+  onCommand, onPick, onButton, onApproval, onAutocomplete, pending, approvals, audit, cfg,
+  setSendDm: (fn: typeof sendDm) => { sendDm = fn; },
+};
 export type { Session };

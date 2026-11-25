@@ -18,7 +18,7 @@ export interface Session {
 }
 
 export type TopupMode = 'live' | 'test';
-export type TopupStatus = 'placed' | 'failed' | 'test';
+export type TopupStatus = 'placed' | 'failed' | 'test' | 'rejected';
 
 export interface TopupRow {
   id: number;
@@ -40,6 +40,7 @@ export interface TopupRow {
   transaction_id: string | null;
   tx_status: string | null;
   error: string | null;
+  approved_by: string | null;
 }
 
 export interface NewTopup {
@@ -59,6 +60,8 @@ export interface NewTopup {
   merchantOrderId?: string | null;
   transactionId?: string | null;
   error?: string | null;
+  /** Admin username who approved or rejected it (null when no approval was needed) */
+  approvedBy?: string | null;
 }
 
 export interface SessionSummary {
@@ -113,7 +116,7 @@ export class AuditStore {
         username TEXT NOT NULL,
         created_at TEXT NOT NULL,
         mode TEXT NOT NULL,             -- live | test
-        status TEXT NOT NULL,           -- placed | failed | test
+        status TEXT NOT NULL,           -- placed | failed | test | rejected
         game_slug TEXT NOT NULL,
         game_title TEXT NOT NULL,
         item_id TEXT NOT NULL,
@@ -130,6 +133,9 @@ export class AuditStore {
       CREATE INDEX IF NOT EXISTS idx_topups_session ON topups(session_id);
       CREATE INDEX IF NOT EXISTS idx_topups_created ON topups(created_at);
     `);
+    // v2: who approved / rejected a member's top-up
+    const cols = this.db.prepare('PRAGMA table_info(topups)').all() as { name: string }[];
+    if (!cols.some((c) => c.name === 'approved_by')) this.db.exec('ALTER TABLE topups ADD COLUMN approved_by TEXT');
   }
 
   // ---------- Sessions ----------
@@ -217,8 +223,8 @@ export class AuditStore {
     const r = this.db
       .prepare(
         `INSERT INTO topups (session_id, user_id, username, created_at, mode, status, game_slug, game_title,
-           item_id, item_name, quantity, unit_price_idr, total_idr, fields_json, merchant_order_id, transaction_id, error)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           item_id, item_name, quantity, unit_price_idr, total_idr, fields_json, merchant_order_id, transaction_id, error, approved_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         t.sessionId,
@@ -238,6 +244,7 @@ export class AuditStore {
         t.merchantOrderId ?? null,
         t.transactionId ?? null,
         t.error ?? null,
+        t.approvedBy ?? null,
       );
     this.touchSession(t.sessionId);
     return this.db.prepare('SELECT * FROM topups WHERE id = ?').get(Number(r.lastInsertRowid)) as unknown as TopupRow;
@@ -293,7 +300,7 @@ export class AuditStore {
       .all(since) as unknown as TopupRow[];
     const cols: (keyof TopupRow)[] = [
       'id', 'session_id', 'created_at', 'username', 'user_id', 'mode', 'status', 'game_title', 'item_name',
-      'quantity', 'unit_price_idr', 'total_idr', 'transaction_id', 'merchant_order_id', 'tx_status', 'error', 'fields_json',
+      'quantity', 'unit_price_idr', 'total_idr', 'transaction_id', 'merchant_order_id', 'tx_status', 'approved_by', 'error', 'fields_json',
     ];
     const esc = (v: unknown) => {
       const s = v === null || v === undefined ? '' : String(v);

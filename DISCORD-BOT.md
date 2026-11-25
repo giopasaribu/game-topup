@@ -7,16 +7,32 @@ Each user with the top-up role starts a **session**, runs top-ups, and ends the 
 | Command | Who | What it does |
 |---|---|---|
 | `/start-session` | role | Starts your session. `/topup` is refused without one. |
-| `/topup product:136 link:https://pay.gold.razer.com/...` | role | Searches the product, shows a preview, places the order only after you press **Pay**. |
+| `/topup product:136 link:https://pay.gold.razer.com/...` | role | Searches the product and shows a preview. Admins press **Pay**; members press **Request approval** (see below). |
 | `/topup-test` (same options) | role | Same checks and preview, but **never sends the order**. Saved as a test. |
 | `/session` | role | Your open (or last) session: number of top-ups, total to collect, latest 10. |
 | `/end-session` | role | Ends your session and posts its total in the channel. |
 | `/audit latest` | role | Your latest top-ups (admins: everyone's, or `user:`). |
 | `/audit today [date:2026-11-25]` | admin | Paid totals per user for a day. |
 | `/audit export [days:30]` | admin | Downloads all top-ups as a CSV file (Excel / Google Sheets). |
-| `/balance` | admin | Merchant deposit balance. |
+| `/balance` | role | Merchant deposit balance. |
 | `/order id:MTRX...` | owner / admin | Status of a transaction. |
 | `/end-session user:@x`, `/session user:@x` | admin | Same, for someone else. |
+
+### Admin approval (on by default)
+
+With `TOPUP_REQUIRE_APPROVAL=true`, a member's real top-up is never placed by the member alone:
+
+1. The member runs `/topup`, checks the preview and presses **Request approval**.
+2. Every admin in `DISCORD_ADMIN_IDS` gets a **DM** from the bot: who asked, session, game, product, IDR price × quantity, total, the link and your deposit before → after, with **Approve** / **Reject** buttons.
+3. **Approve:** the bot re-checks the live price and deposit. If the price changed, nothing is ordered and you're both told. Otherwise it orders, records it under the member's session with `approved_by` = you, posts the usual channel line "(approved by …)", and tells the member.
+4. **Reject:** nothing is ordered, both are told, and the audit keeps a `rejected` row.
+5. **No answer within `APPROVAL_EXPIRY_MINUTES` (10):** the request expires, the DM and the member's message say so, and nothing is ordered. Buttons from before a bot restart also just say "expired".
+
+Notes:
+- Only the first admin to click counts, so a request can never be ordered twice.
+- Admins' own `/topup` and everyone's `/topup-test` skip approval.
+- Set `TOPUP_REQUIRE_APPROVAL=false` and restart to let role members pay directly.
+- Admins must allow DMs from server members: in Discord, right-click the server → Privacy Settings → **Direct Messages** on.
 
 ### `/topup` options
 
@@ -49,10 +65,11 @@ The status line is updated for up to 10 minutes. Previews and errors are only vi
 
 - **Where:** a single SQLite file, `data/audit.db` (`AUDIT_DB_PATH`). Even at 50 top-ups every day it grows by less than 10 MB a year, so your 60 GB disk is no concern.
 - **`sessions` table:** who started it (Discord username and id), start and end time, and whether it was ended by hand or idle.
-- **`topups` table:** session, user, time, `mode` (live/test), `status` (placed/failed/test), game, product name, quantity, `unit_price_idr` and `total_idr` (the real price from the API), the fields sent (Razer link), transaction id, latest status and any error.
+- **`topups` table:** session, user, time, `mode` (live/test), `status` (placed/failed/test/rejected), game, product name, quantity, `unit_price_idr` and `total_idr` (the real price from the API), the fields sent (Razer link), transaction id, latest status and any error.
 - **Viewing it:** use `/audit export` for a CSV, or open the `.db` file with DB Browser for SQLite or any SQLite viewer. Any chart tool can read either.
 - **Backup:** copy `data/audit.db` now and then (for example `scp` it to your PC), or keep the CSV exports.
-- **Session totals** count only real, successful orders. Tests and failed orders are listed separately.
+- **Session totals** count only real, successful orders. Tests, failed and rejected requests are listed separately.
+- **`approved_by` column:** the admin who approved (or rejected) a member's top-up.
 - **Idle sessions** end on their own after `SESSION_IDLE_HOURS` (12) with no activity, and the bot posts the total.
 
 ## Setup
@@ -96,32 +113,34 @@ git add .
 git status          # check: no .env, node_modules, data/ in the list
 git commit -m "GachaGaming top-up CLI and Discord bot"
 ```
-Create an empty **private** repo on github.com named `gachagaming` (no README), then:
+Create an empty **private** repo on github.com named `game-topup` (no README), then:
 ```powershell
 git branch -M main
-git remote add origin https://github.com/<your-github-username>/gachagaming.git
+git remote add origin https://github.com/<your-github-username>/game-topup.git
 git push -u origin main
 ```
 
 **Once, on the VPS:** give the server read-only access to that repo with a deploy key:
 ```bash
-ssh-keygen -t ed25519 -C "gacha-vps" -f ~/.ssh/gacha_deploy -N ""
-cat ~/.ssh/gacha_deploy.pub
+ssh-keygen -t ed25519 -C "game-topup-vps" -f ~/.ssh/game_topup_deploy -N ""
+cat ~/.ssh/game_topup_deploy.pub
 ```
 Copy the printed line into GitHub → the repo → **Settings → Deploy keys → Add deploy key** (leave "Allow write access" off). Then:
 ```bash
 cat >> ~/.ssh/config <<'CFG'
-Host github-gacha
+Host github-game-topup
   HostName github.com
   User git
-  IdentityFile ~/.ssh/gacha_deploy
+  IdentityFile ~/.ssh/game_topup_deploy
+  IdentitiesOnly yes
 CFG
-git clone github-gacha:<your-github-username>/gachagaming.git ~/gachagaming   # answer "yes" to the GitHub fingerprint question
+chmod 600 ~/.ssh/config
+git clone github-game-topup:<your-github-username>/game-topup.git ~/game-topup   # answer "yes" to the GitHub fingerprint question
 ```
 
 #### Install and start
 ```bash
-cd ~/gachagaming
+cd ~/game-topup
 npm install
 cp .env.example .env && nano .env      # fill GACHA_CLIENT_SECRET and the DISCORD_* values
 chmod 600 .env
@@ -144,7 +163,7 @@ Slash commands are registered in your server each time the bot starts, so they s
 ### Updating the bot later
 On your PC: `git add .`, `git commit -m "..."` and `git push`. Then on the VPS:
 ```bash
-cd ~/gachagaming
+cd ~/game-topup
 git pull
 npm install
 pm2 restart gacha-bot
