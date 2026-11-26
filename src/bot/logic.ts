@@ -17,7 +17,14 @@ export function matchItems(product: ProductDetail, query: string): ProductItem[]
   const q = query.trim();
   const byId = product.items.find((i) => i.id === q);
   if (byId) return [byId];
-  const key = loose(q);
+
+  // A suggestion label typed or pasted as text ("IDR 255000 / ANY PACKAGE 255000 — IDR 180,375"):
+  // drop the " — IDR 180,375" price part the bot adds to suggestions, then match the name.
+  const name = q.replace(/\s*[—–-]\s*IDR\s*[\d.,]+\s*$/i, '').trim();
+  const exact = product.items.find((i) => i.name.trim().toLowerCase() === name.toLowerCase());
+  if (exact) return [exact];
+
+  const key = loose(name);
   return product.items.filter((i) => !key || loose(i.name).includes(key)).sort((a, b) => a.price - b.price);
 }
 
